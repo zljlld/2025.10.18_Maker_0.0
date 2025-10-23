@@ -60,20 +60,24 @@ int i, j, k;
 
 /* CSB CODE Start */
 
-#define CSB_DelaY_Time 5000 //超声波中断内等待最长时间 us
+#define CSB_DelaY_Time 5000 //超声波中断内等待最长时间 us  
+// 5000对应5ms/极限测距为85厘米  2500对应2.5ms/极限测距为42.5厘米
 
 char CSB_MOS;                // 哪个超声波正在工作 1：A, 2：B, 3: C,
 bool CSB_OK;                 // 超声波测距完成标志
 
 unsigned int CSB_Time_ms_Start;// 记录超声波计时开始的毫秒数     
 
-unsigned int CSB_A_Time_Start;// 超声波计时开始     
-unsigned int CSB_B_Time_Start;// 超声波计时开始    
-unsigned int CSB_C_Time_Start;// 超声波计时开始
+unsigned int CSB_Time_Start;// 超声波计时开始 
+unsigned int CSB_Time_End;// 超声波计时开始
 
-unsigned int CSB_A_Time_End;// 超声波计时结束     
-unsigned int CSB_B_Time_End;// 超声波计时结束    
-unsigned int CSB_C_Time_End;// 超声波计时开始
+// unsigned int CSB_A_Time_Start;// 超声波计时开始     
+// unsigned int CSB_B_Time_Start;// 超声波计时开始    
+// unsigned int CSB_C_Time_Start;// 超声波计时开始
+
+// unsigned int CSB_A_Time_End;// 超声波计时结束     
+// unsigned int CSB_B_Time_End;// 超声波计时结束    
+// unsigned int CSB_C_Time_End;// 超声波计时开始
 
 unsigned int CSB_A_Time_Dat; // 超声波计时间数据
 unsigned int CSB_B_Time_Dat; // 超声波计时间数据
@@ -299,88 +303,45 @@ void UART_Parse(void)//串口数据解析
 // 外部中断 回调函数
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) 
 {
-  if (GPIO_Pin == CSB_ECHO_Pin) // 进入表示ECHO变高 输出 CSB_A_Time_Dat, CSB_B_Time_Dat
+  if (GPIO_Pin == CSB_ECHO_Pin) // 进入表示ECHO变高 输出 CSB_A_Time_Dat, CSB_B_Time_Dat , CSB_C_Time_Dat
   {
-    if (CSB_MOS == 1) 
+    // 超声波A计时开始
+    CSB_Time_Start = Time_1us;
+    CSB_Time_ms_Start = Time_1ms;
+    while (HAL_GPIO_ReadPin(CSB_ECHO_GPIO_Port, CSB_ECHO_Pin) == GPIO_PIN_SET)// 等待引脚变低
     {
-      // 超声波A计时开始
-      CSB_A_Time_Start = Time_1us;
-      CSB_Time_ms_Start = Time_1ms;
-      while (HAL_GPIO_ReadPin(CSB_ECHO_GPIO_Port, CSB_ECHO_Pin) == GPIO_PIN_SET)// 等待引脚变低
+      j++;
+      if(j > (64 * CSB_DelaY_Time)) // 超时保护 5ms
       {
-        j++;
-        if(j > (64 * CSB_DelaY_Time)) // 超时保护 5ms
-        {
-          break;
-        }
+        break;
       }
-      j = 0;
-      if(CSB_Time_ms_Start == Time_1ms)
-      {
-        CSB_A_Time_End = Time_1us;  // 超声波A计时结束
-      }
-      else if(CSB_Time_ms_Start+1 == Time_1ms)
-      {
-        CSB_A_Time_End = Time_1us + 1000;
-      }
-
-      CSB_A_Time_Dat = CSB_A_Time_End - CSB_A_Time_Start; 
-
-      // 超声波A计时结束
-      CSB_OK = 1;
     }
-    else if(CSB_MOS == 2)
+    j = 0;
+    if(CSB_Time_ms_Start == Time_1ms)
     {
-      // 超声波B计时开始
-      CSB_B_Time_Start = Time_1us;
-      CSB_Time_ms_Start = Time_1ms;
-      while (HAL_GPIO_ReadPin(CSB_ECHO_GPIO_Port, CSB_ECHO_Pin) == GPIO_PIN_SET)// 等待引脚变低
-      {
-        j++;
-        if(j > (64 * CSB_DelaY_Time)) // 超时保护 5ms
-        {
-          break;
-        }
-      }
-      j = 0;
-      if(CSB_Time_ms_Start == Time_1ms)
-      {
-        CSB_B_Time_End = Time_1us;  // 超声波B计时结束
-      }
-      else if(CSB_Time_ms_Start+1 == Time_1ms)
-      {
-        CSB_B_Time_End = Time_1us + 1000;
-      }
-
-      CSB_B_Time_Dat = CSB_B_Time_End - CSB_B_Time_Start; 
-
-      // 超声波B计时结束
-      CSB_OK = 1;
+      CSB_Time_End = Time_1us;  // 超声波A计时结束
     }
-    else if(CSB_MOS == 3)
+    else if(CSB_Time_ms_Start+1 == Time_1ms)
     {
-      // 超声波C计时开始
-      CSB_C_Time_Start = Time_1us;
-      CSB_Time_ms_Start = Time_1ms;
-      while (HAL_GPIO_ReadPin(CSB_ECHO_GPIO_Port, CSB_ECHO_Pin) == GPIO_PIN_SET)// 等待引脚变低
-      {
-        j++;
-        if(j > (64 * CSB_DelaY_Time)) // 超时保护 5ms
-        {
-          break;
-        }
-      }
-      j = 0;
-      if(CSB_Time_ms_Start == Time_1ms)
-      {
-        CSB_C_Time_End = Time_1us;  // 超声波C计时结束
-      }
-      else if(CSB_Time_ms_Start+1 == Time_1ms)
-      {
-        CSB_C_Time_End = Time_1us + 1000;
-      }
-      CSB_OK = 1;
+      CSB_Time_End = Time_1us + 1000;
     }
+
+    switch(CSB_MOS)
+    {
+      case 1:
+        CSB_A_Time_Dat = CSB_Time_End - CSB_Time_Start;
+        break;
+      case 2:
+        CSB_B_Time_Dat = CSB_Time_End - CSB_Time_Start;
+        break;
+      case 3:
+        CSB_C_Time_Dat = CSB_Time_End - CSB_Time_Start;
+        break;
+    }
+
+    // 超声波A计时结束
+    CSB_OK = 1;
+    
   } 
   else if (GPIO_Pin == E1A_Pin) // 编码器A计数
   {
