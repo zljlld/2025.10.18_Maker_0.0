@@ -127,48 +127,58 @@ void SystemClock_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-//
-void Motor(uint32_t Motor_MODS) // 电机驱动，未经验证方向
+// 电机方向驱动，未经验证方向
+void Motor(uint8_t Motor,uint8_t Motor_MOD) 
 {
-  if (Motor_MODS == 0) // 停止
+  if(Motor == 1)// 电机1
   {
-    HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(AIN2_GPIO_Port, AIN2_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
-  } else if (Motor_MODS == 1) // 左转
+    if(Motor_MOD == 1)// 正转
+    {
+      HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(AIN2_GPIO_Port, AIN2_Pin, GPIO_PIN_RESET);
+    }
+    else if(Motor_MOD == 2)// 反转
+    {
+      HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(AIN2_GPIO_Port, AIN2_Pin, GPIO_PIN_SET);
+    }
+  }
+  else if(Motor == 2)// 电机2
   {
-    HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(AIN2_GPIO_Port, AIN2_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
-  } else if (Motor_MODS == 2) // 右转
-  {
-    HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(AIN2_GPIO_Port, AIN2_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_SET);
-  } else if (Motor_MODS == 3) // 前进
-  {
-    HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(AIN2_GPIO_Port, AIN2_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
-  } else if (Motor_MODS == 4) // 后退
-  {
-    HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(AIN2_GPIO_Port, AIN2_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_SET);
+    if(Motor_MOD == 1)// 正转
+    {
+      HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
+    }
+    else if(Motor_MOD == 2)// 反转
+    {
+      HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_SET);
+    }
   }
 }
 
-void Motor_while(void) //电机控制
+// 电机 PWM 控制，Cycle 范围 0-1000(0为0%占空比，1000为100%占空比)
+void Motor_PWM(uint8_t Motor,uint8_t Cycle)
+{
+  if(Motor == 1)// 电机1
+  {
+    __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,Cycle); // 设置占空比
+  }
+  else if(Motor == 2)// 电机2
+  {
+    __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,Cycle); // 设置占空比
+  }
+}
+
+//电机控制
+void Motor_while(void) 
 {
 
 }
 
-void Delay_us(uint32_t us) // 微秒延时函数
+// 微秒延时函数
+void Delay_us(uint32_t us) 
 {
   uint32_t i;
   // 循环次数 = 64 * 延时微秒数（经验值，需根据实际代码效率调整）
@@ -433,11 +443,16 @@ int main(void)
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start_IT(&htim2); // 启动，使能计时器
+
+  HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_1);// 启动 PWM 输出
+  HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_2);// 启动 PWM 输出
   
-  HAL_UART_Receive_IT(&huart1, rx_buf, 1);  // 第一次开启
+  HAL_UART_Receive_IT(&huart1, rx_buf, 1);  // 第一次开启串口接受
   //告诉串口准备接收 1 个字节，收到后触发中断
   //此时串口进入 等待接收 状态，CPU 可执行其他任务（主循环）
   
+ 
+
   OLED_Init(); // OLED 初始化
   /* USER CODE END 2 */
 
