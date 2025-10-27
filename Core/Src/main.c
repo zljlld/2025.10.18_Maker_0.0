@@ -25,6 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdint.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,6 +56,12 @@
 
 #define CSB_MIN_D 60  // 超声波跟随状态最小距离(cm)
 #define CSB_MIN_MIN_D 35 // 超声波短距离跟随状态最小距离(cm)
+
+
+// 电机 PID 参数
+#define Motor_KP 3
+#define Motor_KI 0
+#define Motor_KD 0
 
 int i, j, k;
 
@@ -128,6 +135,8 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN 0 */
 
 // 电机方向驱动，未经验证方向
+//Motor : 电机编号 1 或 2
+//Motor_MOD : 电机转动模式 1 正转 2 反转
 void Motor(uint8_t Motor,uint8_t Motor_MOD) 
 {
   if(Motor == 1)// 电机1
@@ -159,7 +168,9 @@ void Motor(uint8_t Motor,uint8_t Motor_MOD)
 }
 
 // 电机 PWM 控制，Cycle 范围 0-1000(0为0%占空比，1000为100%占空比)
-void Motor_PWM(uint8_t Motor,uint8_t Cycle)
+//Motor : 电机编号 1 或 2
+//Cycle : 占空比 0-1000
+void Motor_PWM(uint8_t Motor,uint16_t Cycle)
 {
   if(Motor == 1)// 电机1
   {
@@ -169,6 +180,15 @@ void Motor_PWM(uint8_t Motor,uint8_t Cycle)
   {
     __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,Cycle); // 设置占空比
   }
+}
+
+//Target_value : 目标值
+//Actual_value : 实际值
+uint16_t Motor_PID(uint8_t Target_value,uint8_t Actual_value)
+{
+  uint16_t Error;
+  Error = Target_value - Actual_value;
+  return Error * Motor_KP; // 简单比例控制
 }
 
 //电机控制
@@ -356,6 +376,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   else if (GPIO_Pin == E1A_Pin) // 编码器A计数
   {
     Encoder_1++;
+    HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin); // 翻转LED状态，指示编码器A脉冲到来
   } 
   else if (GPIO_Pin == E2A_Pin) // 编码器B计数
   {
@@ -403,6 +424,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     HAL_UART_Receive_IT(&huart1, rx_buf, 1);
   }
   HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin); // 翻转LED状态，指示收到数据
+}
+
+void test(void)// 测试函数
+{
+  Motor(1,1); // 电机1正转
+  Motor_PWM(1,Motor_PID(200,Encoder_1_Dat)); // 电机1 占空比
 }
 
 /* USER CODE END 0 */
@@ -453,7 +480,7 @@ int main(void)
   
  
 
-  OLED_Init(); // OLED 初始化
+  //OLED_Init(); // OLED 初始化
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -465,9 +492,9 @@ int main(void)
     /* USER CODE BEGIN 3 */
     CSB_while(); // 超声波测距
     Encoder_while();// 编码器数据刷新函数
-    OLED_while();//OLED 显示
-    
-  }
+    //OLED_while();//OLED 显示
+    test();// 测试函数
+  };
   /* USER CODE END 3 */
 }
 

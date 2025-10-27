@@ -54,7 +54,7 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, BIN2_Pin|BIN1_Pin|AIN2_Pin|AIN1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, BIN2_Pin|BIN1_Pin|AIN1_Pin|AIN2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, CSBB_Trig_Pin|CSBA_Trig_Pin|CSBC_Trig_Pin, GPIO_PIN_RESET);
@@ -66,14 +66,14 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : E2B_Pin E2A_Pin E1B_Pin E1A_Pin */
-  GPIO_InitStruct.Pin = E2B_Pin|E2A_Pin|E1B_Pin|E1A_Pin;
+  /*Configure GPIO pins : E1A_Pin E2A_Pin */
+  GPIO_InitStruct.Pin = E1A_Pin|E2A_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : BIN2_Pin BIN1_Pin AIN2_Pin AIN1_Pin */
-  GPIO_InitStruct.Pin = BIN2_Pin|BIN1_Pin|AIN2_Pin|AIN1_Pin;
+  /*Configure GPIO pins : BIN2_Pin BIN1_Pin AIN1_Pin AIN2_Pin */
+  GPIO_InitStruct.Pin = BIN2_Pin|BIN1_Pin|AIN1_Pin|AIN2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -101,9 +101,6 @@ void MX_GPIO_Init(void)
 
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
-
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
 }
 
