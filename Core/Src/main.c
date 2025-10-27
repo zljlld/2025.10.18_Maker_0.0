@@ -14,11 +14,13 @@
  * If no LICENSE file comes with this software, it is provided AS-IS.
  *
  ******************************************************************************
+ 未完善的部分 屏幕中心值 电机转动方向 未验证超声波是否可使用
  */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "i2c.h"
+#include "stm32f1xx_hal_gpio.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -54,8 +56,8 @@
 
 /* USER CODE BEGIN PV */
 
-#define CSB_MIN_D 60  // 超声波跟随状态最小距离(cm)
-#define CSB_MIN_MIN_D 35 // 超声波短距离跟随状态最小距离(cm)
+#define CSB_MIN_Dat 60  // 超声波跟随状态最小距离(cm)
+#define CSB_MIN_MIN_Dat 35 // 超声波短距离跟随状态最小距离(cm)
 
 
 // 电机 PID 参数
@@ -63,7 +65,10 @@
 #define Motor_KI 0
 #define Motor_KD 0
 
-int i, j, k;
+#define targetSpeedValue 200 // 目标速度值
+#define circlingSpeed 100 // 原地转圈速度差值
+#define turnSpeedDiff 50 // 转弯时速度差值
+#define slowdownValueWhenNoPersonDetected 100 // 未检测到人时减速值
 
 /* CSB CODE Start */
 
@@ -77,14 +82,6 @@ unsigned int CSB_Time_ms_Start;// 记录超声波计时开始的毫秒数
 
 unsigned int CSB_Time_Start;// 超声波计时开始 
 unsigned int CSB_Time_End;// 超声波计时开始
-
-// unsigned int CSB_A_Time_Start;// 超声波计时开始     
-// unsigned int CSB_B_Time_Start;// 超声波计时开始    
-// unsigned int CSB_C_Time_Start;// 超声波计时开始
-
-// unsigned int CSB_A_Time_End;// 超声波计时结束     
-// unsigned int CSB_B_Time_End;// 超声波计时结束    
-// unsigned int CSB_C_Time_End;// 超声波计时开始
 
 unsigned int CSB_A_Time_Dat; // 超声波计时间数据
 unsigned int CSB_B_Time_Dat; // 超声波计时间数据
@@ -102,16 +99,25 @@ unsigned int Encoder_2_Dat; // 编码器2计数,20ms刷新一次
 
 unsigned int Time_1us; // 微秒计时器
 unsigned int Time_1ms; // 毫秒计时器
-unsigned int Time_1s; // 秒计时器
+uint32_t Time_1s; // 秒计时器 溢出需要 1193046.47 小时
+
 
 bool follow_flag = 0; // 跟随标志位 =1 时开始跟随
 bool Short_follow_flagshort = 0;// 短距离跟随标志位 =1 时开始短距离跟随
+bool neverDetectedHuman_flag = 1; // 从未检测到人 标志位
+unsigned int notRecognized_Start_Time_1s = 0; // 未识别到人计时开始时间
+
 
 /*UART CODE Start */
 #define RX_BUF_SIZE 128 //串口接收缓冲区大小
 uint8_t rx_buf[1];  // 中断接收的单字节缓冲区
 uint8_t uart_rx_str[RX_BUF_SIZE] = {0};  // 拼接后的完整字符串
 uint16_t uart_rx_len = 0;     // 当前接收的字符串长度
+
+
+#define screenCenterX 1//屏幕中心x 坐标
+#define screenCenterY 1//屏幕中心y 坐标
+#define maxUnresponsiveCoordDiff 1//最大无响应坐标差值
 
 unsigned int Coords_1_X = 0; // 目标1X坐标
 unsigned int Coords_1_Y = 0; // 目标1Y坐标
@@ -120,7 +126,6 @@ unsigned int Coords_2_Y = 0; // 目标2Y坐标
 unsigned int Coords_3_X = 0; // 目标3X坐标
 unsigned int Coords_3_Y = 0; // 目标3Y坐标
 
-uint8_t OLED_MODS = 1;
 /*UART CODE END */
 
 /* USER CODE END PV */
@@ -134,7 +139,7 @@ void SystemClock_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-// 电机方向驱动，未经验证方向
+// 电机方向驱动，未验证方向
 //Motor : 电机编号 1 或 2
 //Motor_MOD : 电机转动模式 1 正转 2 反转
 void Motor(uint8_t Motor,uint8_t Motor_MOD) 
@@ -182,6 +187,7 @@ void Motor_PWM(uint8_t Motor,uint16_t Cycle)
   }
 }
 
+// 电机 PID 控制 返回占空比值
 //Target_value : 目标值
 //Actual_value : 实际值
 uint16_t Motor_PID(uint8_t Target_value,uint8_t Actual_value)
@@ -191,10 +197,105 @@ uint16_t Motor_PID(uint8_t Target_value,uint8_t Actual_value)
   return Error * Motor_KP; // 简单比例控制
 }
 
+//一旦进入即跟随 包含了跟随到人和没跟随到人两种情况
+void Motor_K230_follow(void)
+{
+  Motor(1,1); // 电机1正转
+  Motor(2,1); // 电机2正转
+  if(rx_buf[0] == 'n')//如果没有识别到人
+  {
+    Motor_PWM(1,targetSpeedValue-slowdownValueWhenNoPersonDetected); // 电机1 占空比
+    Motor_PWM(2,targetSpeedValue-slowdownValueWhenNoPersonDetected); // 电机2 占空比
+    return;
+  }
+  if(screenCenterX - Coords_1_X < maxUnresponsiveCoordDiff || 
+     Coords_1_X - screenCenterX < maxUnresponsiveCoordDiff)// 目标X坐标在屏幕中心附近
+  {
+    Motor_PWM(1,Motor_PID(targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
+    Motor_PWM(2,Motor_PID(targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
+  }
+  else 
+  {
+    if(screenCenterX > Coords_1_X)// 目标在右侧
+    {
+      Motor_PWM(1,Motor_PID(targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
+      Motor_PWM(2,Motor_PID(targetSpeedValue - turnSpeedDiff,Encoder_2_Dat)); // 电机2 占空比
+    }
+    else if(screenCenterX < Coords_1_X)// 目标在左侧
+    {
+      Motor_PWM(1,Motor_PID(targetSpeedValue - turnSpeedDiff,Encoder_1_Dat)); // 电机1 占空比
+      Motor_PWM(2,Motor_PID(targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
+    }
+  }
+}
+
+//原地转圈
+void Motor_turnInPlace(void)
+{
+  if(screenCenterX - Coords_1_X < maxUnresponsiveCoordDiff || 
+     Coords_1_X - screenCenterX < maxUnresponsiveCoordDiff)// 目标X坐标在屏幕中心附近
+  {
+    return; //不转圈
+  }
+  else if(screenCenterX > Coords_1_X)// 目标在右侧
+  {
+    Motor(1,1); // 电机1正转
+    Motor(2,2); // 电机2反转
+  }
+  else if(screenCenterX < Coords_1_X)// 目标在左侧
+  {
+    Motor(1,2); // 电机1反转
+    Motor(2,1); // 电机2正转
+  }
+  Motor_PWM(1,circlingSpeed - circlingSpeed); // 电机1 占空比
+  Motor_PWM(2,circlingSpeed - circlingSpeed); // 电机2 占空比
+}
+
 //电机控制
 void Motor_while(void) 
 {
-
+  if(follow_flag != 1)// 未进入跟随状态
+  {
+    return;
+  }
+  if(rx_buf[0] == 'n')//如果没有识别到人
+  {
+    if(neverDetectedHuman_flag == 1)
+    {
+      return; // 从未检测到人，保持静止
+    }
+    else// 之前检测到人，现在未识别到人
+    {
+      if(notRecognized_Start_Time_1s == 0)
+      {
+        notRecognized_Start_Time_1s = Time_1s;
+      }
+      else 
+      {
+        if((Time_1s - notRecognized_Start_Time_1s >= 2) == 0)// 未超过2秒
+        {
+          Motor_K230_follow(); // 执行跟随
+        }
+        else// 超过2秒未识别到人
+        {
+          follow_flag = 0; // 停止跟随
+          notRecognized_Start_Time_1s = 0; // 重置计时开始时间
+          return;
+        }
+      }
+    }
+  }
+  else// 识别到人
+  {
+    if(CSB_A_Time_Dat/340.0/2.0*100.0 < CSB_MIN_Dat)//距离过近
+    {
+      Motor_turnInPlace();//原地转圈
+    }
+    else
+    {
+      Motor_K230_follow(); // 执行跟随
+    }
+  }
 }
 
 // 微秒延时函数
@@ -209,8 +310,10 @@ void Delay_us(uint32_t us)
   }
 }
 
-void CSB_while(void)// 超声波测距函数 
+// 超声波测距函数 
+void CSB_while(void)
 {
+  unsigned int i = 0;
   CSB_MOS = 1;
   CSB_OK = 0;
   HAL_GPIO_WritePin(CSBA_Trig_GPIO_Port, CSBA_Trig_Pin, GPIO_PIN_SET);
@@ -245,9 +348,10 @@ void CSB_while(void)// 超声波测距函数
   //此时已得到 CSB_C_Time_Dat
 }
 
-void Encoder_while(void)// 编码器数据刷新函数
+// 编码器数据刷新函数
+void Encoder_while(void)
 {
-  if(Time_1ms / 20) // 每20ms读取一次编码器数据
+  if(Time_1ms % 20 == 0) // 每20ms读取一次编码器数据
   {
     Encoder_1_Dat = Encoder_1;
     Encoder_2_Dat = Encoder_2;
@@ -256,8 +360,10 @@ void Encoder_while(void)// 编码器数据刷新函数
   }
 }
 
-void OLED_while(void)//OLED 显示
+//OLED 显示
+void OLED_while(void)
 {
+  int OLED_MODS = 0;
   if(OLED_MODS == 1) // OLED 显示模式 1
   {
    char buffer_1[20],buffer_2[20],buffer_3[20],buffer_4[20];
@@ -284,7 +390,8 @@ void OLED_while(void)//OLED 显示
   }
 }
 
-void UART_Parse(void)//串口数据解析
+//串口数据解析
+void UART_Parse(void)
 {
   if(rx_buf[0] == ']' && uart_rx_len > 0)// 接收到一帧数据
   {
@@ -335,6 +442,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   if (GPIO_Pin == CSB_ECHO_Pin) // 进入表示ECHO变高 输出 CSB_A_Time_Dat, CSB_B_Time_Dat , CSB_C_Time_Dat
   {
+    unsigned int j = 0;
     // 超声波A计时开始
     CSB_Time_Start = Time_1us;
     CSB_Time_ms_Start = Time_1ms;
@@ -390,11 +498,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   if (htim->Instance == TIM2) // 每一微秒溢出一次
   {
     Time_1us++;
-    if(Time_1us == 1000)
+    if(Time_1us >= 1000)
     {
       Time_1ms++;
       Time_1us = 0;
-      if(Time_1ms == 1000)
+      if(Time_1ms >= 1000)
       {
         Time_1s++;
         Time_1ms = 0;
@@ -408,7 +516,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if(huart->Instance == USART1)
   {
-    //HAL_UART_Transmit_IT(&huart1,rx_buf,1);// 回发接收到的字节
     if(uart_rx_len < RX_BUF_SIZE - 1) // 防止缓冲区溢出
     {
       uart_rx_str[uart_rx_len++] = rx_buf[0]; // 拼接接收到的字节
@@ -426,7 +533,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin); // 翻转LED状态，指示收到数据
 }
 
-void test(void)// 测试函数
+// 测试函数
+void test(void)
 {
   Motor(1,1); // 电机1正转
   Motor_PWM(1,Motor_PID(200,Encoder_1_Dat)); // 电机1 占空比
@@ -492,8 +600,9 @@ int main(void)
     /* USER CODE BEGIN 3 */
     CSB_while(); // 超声波测距
     Encoder_while();// 编码器数据刷新函数
+    Motor_while();// 电机控制
     //OLED_while();//OLED 显示
-    test();// 测试函数
+    //test();// 测试函数
   };
   /* USER CODE END 3 */
 }
