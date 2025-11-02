@@ -57,8 +57,12 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define LED_Pin GPIO_PIN_13
-#define LED_GPIO_Port GPIOC
+#define NRF_IRQ_Pin GPIO_PIN_2
+#define NRF_IRQ_GPIO_Port GPIOA
+#define NRF_CE_Pin GPIO_PIN_3
+#define NRF_CE_GPIO_Port GPIOA
+#define NRF_CS_Pin GPIO_PIN_4
+#define NRF_CS_GPIO_Port GPIOA
 #define E1A_Pin GPIO_PIN_0
 #define E1A_GPIO_Port GPIOB
 #define E1A_EXTI_IRQn EXTI0_IRQn
@@ -73,15 +77,18 @@ void Error_Handler(void);
 #define AIN1_GPIO_Port GPIOB
 #define AIN2_Pin GPIO_PIN_15
 #define AIN2_GPIO_Port GPIOB
-#define CSB_ECHO_Pin GPIO_PIN_8
-#define CSB_ECHO_GPIO_Port GPIOA
-#define CSB_ECHO_EXTI_IRQn EXTI9_5_IRQn
+#define CSB_ECHO_1_Pin GPIO_PIN_8
+#define CSB_ECHO_1_GPIO_Port GPIOA
+#define CSB_ECHO_1_EXTI_IRQn EXTI9_5_IRQn
 #define CSBB_Trig_Pin GPIO_PIN_11
 #define CSBB_Trig_GPIO_Port GPIOA
 #define CSBA_Trig_Pin GPIO_PIN_12
 #define CSBA_Trig_GPIO_Port GPIOA
 #define CSBC_Trig_Pin GPIO_PIN_15
 #define CSBC_Trig_GPIO_Port GPIOA
+#define CSB_ECHO_2_Pin GPIO_PIN_3
+#define CSB_ECHO_2_GPIO_Port GPIOB
+#define CSB_ECHO_2_EXTI_IRQn EXTI3_IRQn
 
 /* USER CODE BEGIN Private defines */
 

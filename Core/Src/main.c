@@ -19,8 +19,9 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "font.h"
 #include "i2c.h"
-#include "stm32f1xx_hal_gpio.h"
+#include "spi.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -35,6 +36,8 @@
 #include <sys/_intsup.h>
 
 #include "oled.h"
+#include "NRF24L01.h"
+#include <inttypes.h>// 豆包来的PRId32 等宏定义
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -55,6 +58,8 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+
+void CSB_while_Delay(void);// 超声波测距延时函数
 
 #define CSB_MIN_Dat 60  // 超声波跟随状态最小距离(cm)
 #define CSB_MIN_MIN_Dat 35 // 超声波短距离跟随状态最小距离(cm)
@@ -78,14 +83,16 @@
 char CSB_MOS;                // 哪个超声波正在工作 1：A, 2：B, 3: C,
 bool CSB_OK;                 // 超声波测距完成标志
 
-unsigned int CSB_Time_ms_Start;// 记录超声波计时开始的毫秒数     
+unsigned int CSB_Time_s_Start;// 记录超声波计时开始的毫秒数     
 
-unsigned int CSB_Time_Start;// 超声波计时开始 
-unsigned int CSB_Time_End;// 超声波计时开始
+unsigned int CSB_Time_ms_Start;// 超声波计时开始 
+unsigned int CSB_Time_ms_End;// 超声波计时开始
 
 unsigned int CSB_A_Time_Dat; // 超声波计时间数据
 unsigned int CSB_B_Time_Dat; // 超声波计时间数据
 unsigned int CSB_C_Time_Dat; // 超声波计时间数据
+
+unsigned int CSB_A_Dis_Dat; // 超声波距离数据 单位 cm
 
 /* CSB CODE END */
 
@@ -101,12 +108,24 @@ unsigned int Time_1us; // 微秒计时器
 unsigned int Time_1ms; // 毫秒计时器
 uint32_t Time_1s; // 秒计时器 溢出需要 1193046.47 小时
 
+unsigned int Delay_Time_ms_Start;//延时计算开始时间
+unsigned int Delay_Time_s_Start;//延时计算开始时间
+unsigned int Delay_Time_ms_End;//延时计算结束时间
+
+unsigned int Delay_Time_ms_Start;//延时计算开始时间
+unsigned int Delay_Time_s_Start;//延时计算开始时间
+
+unsigned int Tim2_Time_Start;//开始时间
+unsigned int Tim2_Time_End;//结束时间
 
 bool follow_flag = 0; // 跟随标志位 =1 时开始跟随
 bool Short_follow_flagshort = 0;// 短距离跟随标志位 =1 时开始短距离跟随
 bool neverDetectedHuman_flag = 1; // 从未检测到人 标志位
 unsigned int notRecognized_Start_Time_1s = 0; // 未识别到人计时开始时间
 
+
+uint8_t	Receive[32]; //NRF24L01接收的内容
+uint16_t NRF24L01_Dat; //NRF24L01接收的数据
 
 /*UART CODE Start */
 #define RX_BUF_SIZE 128 //串口接收缓冲区大小
@@ -302,8 +321,8 @@ void Motor_while(void)
 void Delay_us(uint32_t us) 
 {
   uint32_t i;
-  // 循环次数 = 64 * 延时微秒数（经验值，需根据实际代码效率调整）
-  uint32_t loops = 64 * us;
+  // 循环次数 = 72 * 延时微秒数（经验值，需根据实际代码效率调整）
+  uint32_t loops = 72 * us;
   for (i = 0; i < loops; i++) 
   {
     __NOP(); // 空指令，消耗一个CPU周期（不同编译器可能需替换为对应空操作）
@@ -313,39 +332,48 @@ void Delay_us(uint32_t us)
 // 超声波测距函数 
 void CSB_while(void)
 {
-  unsigned int i = 0;
+  //unsigned int i = 0;
   CSB_MOS = 1;
   CSB_OK = 0;
   HAL_GPIO_WritePin(CSBA_Trig_GPIO_Port, CSBA_Trig_Pin, GPIO_PIN_SET);
   Delay_us(20);
   HAL_GPIO_WritePin(CSBA_Trig_GPIO_Port, CSBA_Trig_Pin, GPIO_PIN_RESET);
 
-  while (CSB_OK == 0 && i < (64 * 6000)) // 等待测距完成 (6ms超时保护)
-    i++;
-  i = 0;
+  Delay_Time_ms_Start = Time_1ms;
+  Delay_Time_s_Start = Time_1s;
+
+  while (CSB_OK == 0 && Time_1ms+(Time_1s*1000) > (Delay_Time_ms_Start+(Delay_Time_s_Start*1000) + 6)) // 等待测距完成 (6ms超时保护)
+  {
+    //CSB_while_Delay();// 超声波测距延时函数
+  }
+    
   //此时已得到 CSB_A_Time_Dat
 
-  CSB_MOS = 2;
-  CSB_OK = 0;
-  HAL_GPIO_WritePin(CSBB_Trig_GPIO_Port, CSBB_Trig_Pin, GPIO_PIN_SET);
-  Delay_us(20);
-  HAL_GPIO_WritePin(CSBB_Trig_GPIO_Port, CSBB_Trig_Pin, GPIO_PIN_RESET);
+  // CSB_MOS = 2;
+  // CSB_OK = 0;
+  // HAL_GPIO_WritePin(CSBB_Trig_GPIO_Port, CSBB_Trig_Pin, GPIO_PIN_SET);
+  // Delay_us(20);
+  // HAL_GPIO_WritePin(CSBB_Trig_GPIO_Port, CSBB_Trig_Pin, GPIO_PIN_RESET);
 
-  while (CSB_OK == 0 && i < (64 * 6000)) // 等待测距完成 (6ms超时保护)
-    i++;
-  i = 0;
-  //此时已得到 CSB_B_Time_Dat
+  // while (CSB_OK == 0 && i < (72 * 6000)) // 等待测距完成 (6ms超时保护)
+  // {
+  //   i++;
+  // }
+  // i = 0;
+  // //此时已得到 CSB_B_Time_Dat
 
-  CSB_MOS = 3;
-  CSB_OK = 0;
-  HAL_GPIO_WritePin(CSBC_Trig_GPIO_Port, CSBC_Trig_Pin, GPIO_PIN_SET);
-  Delay_us(20);
-  HAL_GPIO_WritePin(CSBC_Trig_GPIO_Port, CSBC_Trig_Pin, GPIO_PIN_RESET);
+  // CSB_MOS = 3;
+  // CSB_OK = 0;
+  // HAL_GPIO_WritePin(CSBC_Trig_GPIO_Port, CSBC_Trig_Pin, GPIO_PIN_SET);
+  // Delay_us(20);
+  // HAL_GPIO_WritePin(CSBC_Trig_GPIO_Port, CSBC_Trig_Pin, GPIO_PIN_RESET);
 
-  while (CSB_OK == 0 && i < (64 * 6000)) // 等待测距完成 (6ms超时保护)
-    i++;
-  i = 0;
-  //此时已得到 CSB_C_Time_Dat
+  // while (CSB_OK == 0 && i < (72 * 6000)) // 等待测距完成 (6ms超时保护)
+  // {
+  //   i++;
+  // }
+  // i = 0;
+  // //此时已得到 CSB_C_Time_Dat
 }
 
 // 编码器数据刷新函数
@@ -363,10 +391,11 @@ void Encoder_while(void)
 //OLED 显示
 void OLED_while(void)
 {
-  int OLED_MODS = 0;
-  if(OLED_MODS == 1) // OLED 显示模式 1
+
+  char buffer_1[20],buffer_2[20],buffer_3[20],buffer_4[20],buffer_5[20],buffer_6[20];
+  int OLED_MODS = 5;
+  if(OLED_MODS == 1) // OLED 显示坐标
   {
-   char buffer_1[20],buffer_2[20],buffer_3[20],buffer_4[20];
    OLED_NewFrame();
    sprintf(buffer_1, "1X: %d", Coords_1_X);
    sprintf(buffer_2, "1Y: %d", Coords_1_Y);
@@ -377,16 +406,52 @@ void OLED_while(void)
    OLED_PrintString(1,30,buffer_3,&font16x16, OLED_COLOR_NORMAL);
    OLED_PrintString(60,30,buffer_4,&font16x16, OLED_COLOR_NORMAL);
    OLED_ShowFrame();
-   HAL_Delay(100);
   }
-  else if(OLED_MODS == 2)// OLED 显示模式 2
+  else if(OLED_MODS == 2)// OLED 显示串口
   {
     char buffer_5[20];
     OLED_NewFrame();
     sprintf(buffer_5, "%d", rx_buf[0]);
     OLED_PrintString(1,1,buffer_5,&font16x16, OLED_COLOR_NORMAL);
     OLED_ShowFrame();
-    HAL_Delay(100);
+  }
+  else if(OLED_MODS == 3)// OLED 显示超声波数据超声波
+  {
+    OLED_NewFrame();
+    sprintf(buffer_1, "A: %d", CSB_A_Time_Dat);
+    sprintf(buffer_2, "B: %d", CSB_B_Time_Dat);
+    sprintf(buffer_3, "C: %d", CSB_C_Time_Dat);
+    sprintf(buffer_4, "CSB_MOS: %d", CSB_MOS);
+    sprintf(buffer_5, "ms_Start: %d", CSB_Time_ms_Start);
+    sprintf(buffer_6, "ms_End: %d",CSB_Time_ms_End);
+    OLED_PrintString(1,1,buffer_1,&font16x16, OLED_COLOR_NORMAL);
+    OLED_PrintString(1,20,buffer_2,&font16x16, OLED_COLOR_NORMAL);
+    OLED_PrintString(1,40,buffer_3,&font16x16, OLED_COLOR_NORMAL);
+    OLED_PrintString(40,1,buffer_4,&font16x16, OLED_COLOR_NORMAL);
+    OLED_PrintString(40,20,buffer_5,&font16x16, OLED_COLOR_NORMAL);
+    OLED_PrintString(40,40,buffer_6,&font16x16, OLED_COLOR_NORMAL);
+    OLED_ShowFrame();
+  }
+  else if(OLED_MODS == 4)// OLED 显示
+  {
+    OLED_NewFrame();
+    sprintf(buffer_4, "A: %d", CSB_A_Time_Dat);
+    sprintf(buffer_5, "Time_End: %d", Tim2_Time_End);
+    sprintf(buffer_6, "ms_End: %d",CSB_Time_ms_End);
+    //OLED_PrintString(1,1,buffer_4,&font16x16, OLED_COLOR_NORMAL);
+    OLED_PrintString(1,20,buffer_5,&font16x16, OLED_COLOR_NORMAL);
+    //OLED_PrintString(1,40,buffer_6,&font16x16, OLED_COLOR_NORMAL);
+    OLED_ShowFrame();
+    
+  }
+  else if(OLED_MODS == 5)// OLED 显示
+  {/*  */
+    OLED_NewFrame();
+    sprintf(buffer_1, "NRF:%s X:%d Y:%d", Receive, Coords_1_X, Coords_1_Y);
+    sprintf(buffer_2, "cm:%d E1:%d E2:%d",CSB_A_Dis_Dat,Encoder_1_Dat,Encoder_2_Dat);
+    OLED_PrintASCIIString(1,1,buffer_1,&afont8x6, OLED_COLOR_NORMAL);
+    OLED_PrintASCIIString(1,10,buffer_2,&afont8x6, OLED_COLOR_NORMAL);
+    OLED_ShowFrame();
   }
 }
 
@@ -437,54 +502,44 @@ void UART_Parse(void)
   }
 }
 
+void NRF24L01_Z_Init(void)
+{
+  while(NRF24L01_Check())
+  {
+      // printf("硬件查寻不到NRF24L01无线模块,请检查接线是否错误\r\n"); 
+      HAL_Delay(1000);
+  }
+	NRF24L01_RX_Mode();//设置为接受模式
+}
+
+void NRF24L01_while(void)
+{
+  if(NRF24L01_RxPacket(Receive)==0)
+    {
+      Receive[32]=0;//加入字符串结束符   
+      NRF24L01_Dat = atoi((char*)Receive); // 将接收到的数据转换为整数
+      //printf("NRF24L01无线模块数据接收成功：%s\r\n",Receive);
+    }
+}
+
 // 外部中断 回调函数
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) 
 {
-  if (GPIO_Pin == CSB_ECHO_Pin) // 进入表示ECHO变高 输出 CSB_A_Time_Dat, CSB_B_Time_Dat , CSB_C_Time_Dat
+  if (GPIO_Pin == CSB_ECHO_1_Pin) // 进入表示ECHO变高 
   {
-    unsigned int j = 0;
-    // 超声波A计时开始
-    CSB_Time_Start = Time_1us;
-    CSB_Time_ms_Start = Time_1ms;
-    while (HAL_GPIO_ReadPin(CSB_ECHO_GPIO_Port, CSB_ECHO_Pin) == GPIO_PIN_SET)// 等待引脚变低
-    {
-      j++;
-      if(j > (64 * CSB_DelaY_Time)) // 超时保护 5ms
-      {
-        break;
-      }
-    }
-    j = 0;
-    if(CSB_Time_ms_Start == Time_1ms)
-    {
-      CSB_Time_End = Time_1us;  // 超声波A计时结束
-    }
-    else if(CSB_Time_ms_Start+1 == Time_1ms)
-    {
-      CSB_Time_End = Time_1us + 1000;
-    }
-
-    switch(CSB_MOS)
-    {
-      case 1:
-        CSB_A_Time_Dat = CSB_Time_End - CSB_Time_Start;
-        break;
-      case 2:
-        CSB_B_Time_Dat = CSB_Time_End - CSB_Time_Start;
-        break;
-      case 3:
-        CSB_C_Time_Dat = CSB_Time_End - CSB_Time_Start;
-        break;
-    }
-
-    // 超声波A计时结束
-    CSB_OK = 1;
-    
+    HAL_TIM_Base_Start(&htim2); // 启动，使能计时器
   } 
+  else if(GPIO_Pin == CSB_ECHO_2_Pin)//进入表示ECHO变低 
+  {
+    HAL_TIM_Base_Stop(&htim2); // 停止，禁止计时器
+    Tim2_Time_End = __HAL_TIM_GET_COUNTER(&htim2); // 读取计时器的计数值 单位是100us
+    CSB_A_Dis_Dat = Tim2_Time_End * 0.7; // 计算距离 cm
+     
+    __HAL_TIM_SET_COUNTER(&htim2,0); // 清零计数器，为下一次测量做准备
+  }
   else if (GPIO_Pin == E1A_Pin) // 编码器A计数
   {
     Encoder_1++;
-    HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin); // 翻转LED状态，指示编码器A脉冲到来
   } 
   else if (GPIO_Pin == E2A_Pin) // 编码器B计数
   {
@@ -495,18 +550,13 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 // 定时器回调函数
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) 
 {
-  if (htim->Instance == TIM2) // 每一微秒溢出一次
+  if (htim->Instance == TIM2) // 每一毫秒溢出一次
   {
-    Time_1us++;
-    if(Time_1us >= 1000)
+    Time_1ms++;
+    if(Time_1ms >= 1000)
     {
-      Time_1ms++;
-      Time_1us = 0;
-      if(Time_1ms >= 1000)
-      {
-        Time_1s++;
-        Time_1ms = 0;
-      }
+      Time_1s++;
+      Time_1ms = 0;
     }
   }
 }
@@ -530,16 +580,25 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     // 重新启动中断接收（持续接收下一字节）
     HAL_UART_Receive_IT(&huart1, rx_buf, 1);
   }
-  HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin); // 翻转LED状态，指示收到数据
 }
 
 // 测试函数
 void test(void)
 {
   Motor(1,1); // 电机1正转
-  Motor_PWM(1,Motor_PID(200,Encoder_1_Dat)); // 电机1 占空比
+  Motor(2,1); // 电机2正转
+  Motor_PWM(1,NRF24L01_Dat*10); // 电机1 占空比
+  Motor_PWM(2,NRF24L01_Dat*10); // 电机2 占空比
 }
 
+
+void CSB_while_Delay(void)// 超声波测距延时函数
+{
+  Encoder_while();// 编码器数据刷新函数
+  Motor_while();// 电机控制
+  OLED_while();//OLED 显示
+  
+}
 /* USER CODE END 0 */
 
 /**
@@ -576,9 +635,8 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM1_Init();
   MX_I2C1_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
-  HAL_TIM_Base_Start_IT(&htim2); // 启动，使能计时器
-
   HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_1);// 启动 PWM 输出
   HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_2);// 启动 PWM 输出
   
@@ -588,7 +646,10 @@ int main(void)
   
  
 
-  //OLED_Init(); // OLED 初始化
+  OLED_Init(); // OLED 初始化
+
+  NRF24L01_Z_Init();//NRF24L01 初始化
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -601,8 +662,9 @@ int main(void)
     CSB_while(); // 超声波测距
     Encoder_while();// 编码器数据刷新函数
     Motor_while();// 电机控制
-    //OLED_while();//OLED 显示
-    //test();// 测试函数
+    OLED_while();//OLED 显示
+    NRF24L01_while();//NRF24L01 数据接收
+    test();// 测试函数
   };
   /* USER CODE END 3 */
 }
@@ -619,12 +681,13 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI_DIV2;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL16;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
