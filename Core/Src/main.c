@@ -73,9 +73,9 @@ void CSB_while_Delay(void);// 超声波测距延时函数
 //K230跟随模式参数---------------------------------------------------------
 #define screenCenterX 320//屏幕中心x 坐标
 #define screenCenterY 240//屏幕中心y 坐标
-#define maxUnresponsiveCoordDiff 10//最大无响应坐标差值
+#define maxUnresponsiveCoordDiff 80//最大无响应坐标差值
 #define targetSpeedValue 200 // 目标速度值
-#define turnSpeedDiffCoeff 2 // 转弯时速度差值系数
+#define turnSpeedDiffCoeff 1 // 转弯时速度差值系数
 
 //#define slowdownValueWhenNoPersonDetected 100 // 未检测到人时减速值
 #define circlingSpeed 100 // 原地转圈速度差值
@@ -148,6 +148,8 @@ bool person = 0;// 是否检测到人
 uint16_t person_NODat = 0;// 是否检测到人累积次数
 #define person_NODat_MAX 20 //检测不到人的退出次数
 
+uint16_t PWM_1,PWM_2;//PWM 监测值
+
 unsigned int Coords_1_X = 0; // 目标1X坐标
 unsigned int Coords_1_Y = 0; // 目标1Y坐标
 unsigned int Coords_2_X = 0; // 目标2X坐标
@@ -208,7 +210,7 @@ void Motor(uint8_t Motor,uint8_t Motor_MOD)
 // 电机 PWM 控制，Cycle 范围 0-1000(0为0%占空比，1000为100%占空比)
 //Motor : 电机编号 1 或 2
 //Cycle : 占空比 0-1000
-void Motor_PWM(uint8_t Motor,uint16_t Cycle)
+void Motor_PWM(uint8_t Motor,int16_t Cycle)
 {
   if(Cycle > 1000)
   {
@@ -220,10 +222,12 @@ void Motor_PWM(uint8_t Motor,uint16_t Cycle)
   }
   if(Motor == 1)// 电机1
   {
+    PWM_1 = Cycle;
     __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,Cycle); // 设置占空比
   }
   else if(Motor == 2)// 电机2
   {
+    PWM_2 = Cycle;
     __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,Cycle); // 设置占空比
   }
 }
@@ -231,7 +235,7 @@ void Motor_PWM(uint8_t Motor,uint16_t Cycle)
 // 电机 PID 控制 返回占空比值
 //Target_value : 目标值
 //Actual_value : 实际值
-uint16_t Motor_PID(uint8_t Target_value,uint8_t Actual_value)
+uint16_t Motor_PID(uint16_t Target_value,uint16_t Actual_value)
 {
   int16_t Error;
   Error = Target_value - Actual_value;
@@ -249,18 +253,9 @@ void Motor_K230_follow(void)
   Motor(2,1); // 电机2正转
   if(person == 0)//如果没有识别到人 停止
   {
-    person_NODat++;
-    if(person_NODat > person_NODat_MAX)
-    {
-      Motor_PWM(1,0); // 电机1 占空比
-      Motor_PWM(2,0); // 电机2 占空比
-      
-      if(person_NODat > 1000)//防溢出
-      {
-        person_NODat = person_NODat_MAX + 1;
-      }
-      return;
-    }
+    Motor_PWM(1,0); // 电机1 占空比
+    Motor_PWM(2,0); // 电机2 占空比
+    return;
   }
   if(CSB_A_Dis_Dat < 15)//距离过近
   {
@@ -268,38 +263,38 @@ void Motor_K230_follow(void)
     Motor_PWM(2,0); // 电机2 占空比
     return;
   }
-  if(Coords_1_X > screenCenterX)
+  if(screenCenterX < Coords_1_X )//在右侧
   {
-    if((Coords_1_X - screenCenterX) < maxUnresponsiveCoordDiff)
+    if((Coords_1_X - screenCenterX) < maxUnresponsiveCoordDiff)//在中心区域
     {
       Motor_PWM(1,Motor_PID(targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
       Motor_PWM(2,Motor_PID(targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
       return;
     }
   }
-  else if(Coords_1_X < screenCenterX)
+  else if(Coords_1_X < screenCenterX)//在左侧
   {
-    if((screenCenterX - Coords_1_X) < maxUnresponsiveCoordDiff)
+    if((screenCenterX - Coords_1_X) < maxUnresponsiveCoordDiff)//在中心区域
     {
       Motor_PWM(1,Motor_PID(targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
       Motor_PWM(2,Motor_PID(targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
       return;
     }
   }
-  else
+  
+  
+  if(Coords_1_X < screenCenterX)// 目标在左侧 (screenCenterX-Coords_1_X)误差值,人离镜头中心越远值越大
   {
-    if(screenCenterX < Coords_1_X)// 目标在左侧 (screenCenterX-Coords_1_X)误差值,人离镜头中心越远值越大
-    {
-      //差值计算公式 = 目标速度-(误差值*系数)
-      Motor_PWM(1,Motor_PID(targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
-      Motor_PWM(2,Motor_PID(targetSpeedValue - (screenCenterX-Coords_1_X)*turnSpeedDiffCoeff,Encoder_2_Dat)); // 电机2 占空比
-    }
-    else if(screenCenterX > Coords_1_X)// 目标在右侧
-    {
-      Motor_PWM(1,Motor_PID(targetSpeedValue - (Coords_1_X - screenCenterX)*turnSpeedDiffCoeff,Encoder_1_Dat)); // 电机1 占空比
-      Motor_PWM(2,Motor_PID(targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
-    }
+    //差值计算公式 = 目标速度-(误差值*系数)
+    Motor_PWM(1,Motor_PID(targetSpeedValue - (screenCenterX - Coords_1_X)*turnSpeedDiffCoeff + maxUnresponsiveCoordDiff,Encoder_1_Dat)); // 电机1 占空比
+    Motor_PWM(2,Motor_PID(targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
   }
+  else if(screenCenterX < Coords_1_X)// 目标在右侧
+  {
+    Motor_PWM(1,Motor_PID(targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
+    Motor_PWM(2,Motor_PID(targetSpeedValue - (Coords_1_X - screenCenterX)*turnSpeedDiffCoeff + maxUnresponsiveCoordDiff,Encoder_2_Dat)); // 电机2 占空比
+  }
+  
 }
 
 //无线遥控跟随
@@ -307,29 +302,31 @@ void Motor_NRF24L01_follow(void)
 {
   //Joystick__XDat,Joystick__YDat  0 到 4095
   uint8_t Xmod,Ymod;
-  switch(Joystick__XDat)
+  if(Joystick__XDat > 4000)
   {
-    case 4095:
-      Xmod = 2;//左
-    break;
-    case 0:
-      Xmod = 1;//右
-    break;
-    default:
-      Xmod = 0;//中
-    break;
+    Xmod = 2;//左
   }
-  switch(Joystick__YDat)
+  else if(Joystick__XDat < 20)
   {
-    case 4095:
-      Ymod = 1;//下
-    break;
-    case 0:
-      Ymod = 2;//上
-    break;
-    default:
-      Ymod = 0;//中
-    break;
+    Xmod = 1;//右
+  }
+  else {
+  {
+    Xmod = 0;//中
+  }
+  }
+  if(Joystick__YDat > 4000)
+  {
+    Ymod = 1;//下
+  }
+  else if(Joystick__YDat < 20)
+  {
+    Ymod = 2;//上
+  }
+  else {
+  {
+    Ymod = 0;//中
+  }
   }
   if(Ymod == 0 && Xmod == 0)// 停止
   {
@@ -405,50 +402,6 @@ void Motor_turnInPlace(void)
 //电机控制
 void Motor_while(void) 
 {
-  /*
-  if(follow_flag != 1)// 未进入跟随状态
-  {
-    return;
-  }
-  if(rx_buf[0] == 'n')//如果没有识别到人
-  {
-    if(neverDetectedHuman_flag == 1)
-    {
-      return; // 从未检测到人，保持静止
-    }
-    else// 之前检测到人，现在未识别到人
-    {
-      if(notRecognized_Start_Time_1s == 0)
-      {
-        notRecognized_Start_Time_1s = Time_1s;
-      }
-      else 
-      {
-        if((Time_1s - notRecognized_Start_Time_1s >= 2) == 0)// 未超过2秒
-        {
-          Motor_K230_follow(); // 执行跟随
-        }
-        else// 超过2秒未识别到人
-        {
-          follow_flag = 0; // 停止跟随
-          notRecognized_Start_Time_1s = 0; // 重置计时开始时间
-          return;
-        }
-      }
-    }
-  }
-  else// 识别到人
-  {
-    if(CSB_A_Time_Dat/340.0/2.0*100.0 < CSB_MIN_Dat)//距离过近
-    {
-      Motor_turnInPlace();//原地转圈
-    }
-    else
-    {
-      Motor_K230_follow(); // 执行跟随
-    }
-  }
-    */
   switch(NRF_MODS)
   {
     case 0 :
@@ -501,7 +454,7 @@ void Encoder_while(void)
 void OLED_while(void)
 {
 
-  char buffer_1[48],buffer_2[20],buffer_3[20],buffer_4[20],buffer_5[20],buffer_6[20];
+  char buffer_1[48],buffer_2[30],buffer_3[30],buffer_4[30],buffer_5[30],buffer_6[30];
   int OLED_MODS = 5;
   if(OLED_MODS == 1) // OLED 显示坐标
   {
@@ -550,14 +503,16 @@ void OLED_while(void)
     
   }
   else if(OLED_MODS == 5)// OLED 显示
-  {/*  */
+  {
     OLED_NewFrame();
     sprintf(buffer_1, "K230 X:%d Y:%d", Coords_1_X, Coords_1_Y);
     sprintf(buffer_2, "cm:%d E1:%d E2:%d",CSB_A_Dis_Dat,Encoder_1_Dat,Encoder_2_Dat);
     sprintf(buffer_3, "NRF:%d,X:%d,Y:%d",NRF_MODS,Joystick__XDat,Joystick__YDat);
+    sprintf(buffer_4, "PWM1:%d,PWM2:%d",PWM_1,PWM_2);
     OLED_PrintASCIIString(1,1,buffer_1,&afont8x6, OLED_COLOR_NORMAL);
     OLED_PrintASCIIString(1,10,buffer_2,&afont8x6, OLED_COLOR_NORMAL);
     OLED_PrintASCIIString(1,20,buffer_3,&afont8x6, OLED_COLOR_NORMAL);
+    OLED_PrintASCIIString(1,30,buffer_4,&afont8x6, OLED_COLOR_NORMAL);
     OLED_ShowFrame();
   }
 }
@@ -744,10 +699,9 @@ int main(void)
 
   /* MCU Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
-  /* USER CODE BEGIN Init */
+  /*USER CODE BEGIN Init*/
 
   /* USER CODE END Init */
 
@@ -796,7 +750,7 @@ int main(void)
     OLED_while();//OLED 显示
     //test();// 测试函数
     Motor_while();// 电机控制
-  };
+  }
   /* USER CODE END 3 */
 }
 
