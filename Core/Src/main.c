@@ -14,7 +14,7 @@
  * If no LICENSE file comes with this software, it is provided AS-IS.
  *
  ******************************************************************************
- 未完善的部分 屏幕中心值 电机转动方向 未验证超声波是否可使用
+ 未完善的部分 电机转动方向 
  */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
@@ -70,20 +70,30 @@ void CSB_while_Delay(void);// 超声波测距延时函数
 #define Motor_KI 0
 #define Motor_KD 0
 
+//K230跟随模式参数---------------------------------------------------------
+#define screenCenterX 320//屏幕中心x 坐标
+#define screenCenterY 240//屏幕中心y 坐标
+#define maxUnresponsiveCoordDiff 10//最大无响应坐标差值
 #define targetSpeedValue 200 // 目标速度值
+#define turnSpeedDiffCoeff 2 // 转弯时速度差值系数
+
+//#define slowdownValueWhenNoPersonDetected 100 // 未检测到人时减速值
 #define circlingSpeed 100 // 原地转圈速度差值
-#define turnSpeedDiff 50 // 转弯时速度差值
-#define slowdownValueWhenNoPersonDetected 100 // 未检测到人时减速值
+
+
+//无线遥控模式参数---------------------------------------------------------
+#define N_targetSpeedValue 200 // 目标速度值
+#define N_turnSpeedDiff 75 // 转弯时速度差
+
+
+
+uint8_t NRF_MODS = 0;//无线遥控模式 0 停止,1遥控跟随,2摄像头跟随
+unsigned int Joystick__XDat = 0;
+unsigned int Joystick__YDat = 0;
 
 /* CSB CODE Start */
 
-#define CSB_DelaY_Time 5000 //超声波中断内等待最长时间 us  
-// 5000对应5ms/极限测距为85厘米  2500对应2.5ms/极限测距为42.5厘米
-
 char CSB_MOS;                // 哪个超声波正在工作 1：A, 2：B, 3: C,
-bool CSB_OK;                 // 超声波测距完成标志
-
-unsigned int CSB_Time_s_Start;// 记录超声波计时开始的毫秒数     
 
 unsigned int CSB_Time_ms_Start;// 超声波计时开始 
 unsigned int CSB_Time_ms_End;// 超声波计时开始
@@ -104,7 +114,6 @@ unsigned int Encoder_1_Dat; // 编码器1计数,20ms刷新一次
 unsigned int Encoder_2_Dat; // 编码器2计数,20ms刷新一次
 /* Encoder CODE END */
 
-unsigned int Time_1us; // 微秒计时器
 unsigned int Time_1ms; // 毫秒计时器
 uint32_t Time_1s; // 秒计时器 溢出需要 1193046.47 小时
 
@@ -124,19 +133,20 @@ bool neverDetectedHuman_flag = 1; // 从未检测到人 标志位
 unsigned int notRecognized_Start_Time_1s = 0; // 未识别到人计时开始时间
 
 
-uint8_t	Receive[32]; //NRF24L01接收的内容
-uint16_t NRF24L01_Dat; //NRF24L01接收的数据
+uint8_t	Receive[17]; //NRF24L01接收的内容
+uint16_t NRF24L01_Dat; //NRF24L01接收的数据（直接转换为整数）
 
-/*UART CODE Start */
+//UART参数---------------------------------------------------------
 #define RX_BUF_SIZE 128 //串口接收缓冲区大小
 uint8_t rx_buf[1];  // 中断接收的单字节缓冲区
 uint8_t uart_rx_str[RX_BUF_SIZE] = {0};  // 拼接后的完整字符串
 uint16_t uart_rx_len = 0;     // 当前接收的字符串长度
 
 
-#define screenCenterX 1//屏幕中心x 坐标
-#define screenCenterY 1//屏幕中心y 坐标
-#define maxUnresponsiveCoordDiff 1//最大无响应坐标差值
+bool person = 0;// 是否检测到人
+
+uint16_t person_NODat = 0;// 是否检测到人累积次数
+#define person_NODat_MAX 20 //检测不到人的退出次数
 
 unsigned int Coords_1_X = 0; // 目标1X坐标
 unsigned int Coords_1_Y = 0; // 目标1Y坐标
@@ -144,6 +154,10 @@ unsigned int Coords_2_X = 0; // 目标2X坐标
 unsigned int Coords_2_Y = 0; // 目标2Y坐标
 unsigned int Coords_3_X = 0; // 目标3X坐标
 unsigned int Coords_3_Y = 0; // 目标3Y坐标
+
+
+
+
 
 /*UART CODE END */
 
@@ -180,13 +194,13 @@ void Motor(uint8_t Motor,uint8_t Motor_MOD)
   {
     if(Motor_MOD == 1)// 正转
     {
-      HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_SET);
     }
     else if(Motor_MOD == 2)// 反转
     {
-      HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(BIN2_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
     }
   }
 }
@@ -196,6 +210,14 @@ void Motor(uint8_t Motor,uint8_t Motor_MOD)
 //Cycle : 占空比 0-1000
 void Motor_PWM(uint8_t Motor,uint16_t Cycle)
 {
+  if(Cycle > 1000)
+  {
+    Cycle = 1000; // 限制最大值为1000
+  }
+  if(Cycle < 0)
+  {
+    Cycle = 0; // 限制最小值为0
+  }
   if(Motor == 1)// 电机1
   {
     __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,Cycle); // 设置占空比
@@ -211,43 +233,153 @@ void Motor_PWM(uint8_t Motor,uint16_t Cycle)
 //Actual_value : 实际值
 uint16_t Motor_PID(uint8_t Target_value,uint8_t Actual_value)
 {
-  uint16_t Error;
+  int16_t Error;
   Error = Target_value - Actual_value;
+  if(Error < 0)
+  {
+    Error = 0;
+  }
   return Error * Motor_KP; // 简单比例控制
 }
 
-//一旦进入即跟随 包含了跟随到人和没跟随到人两种情况
+//摄像头跟随 包含了跟随到人和没跟随到人两种情况
 void Motor_K230_follow(void)
 {
   Motor(1,1); // 电机1正转
   Motor(2,1); // 电机2正转
-  if(rx_buf[0] == 'n')//如果没有识别到人
+  if(person == 0)//如果没有识别到人 停止
   {
-    Motor_PWM(1,targetSpeedValue-slowdownValueWhenNoPersonDetected); // 电机1 占空比
-    Motor_PWM(2,targetSpeedValue-slowdownValueWhenNoPersonDetected); // 电机2 占空比
+    person_NODat++;
+    if(person_NODat > person_NODat_MAX)
+    {
+      Motor_PWM(1,0); // 电机1 占空比
+      Motor_PWM(2,0); // 电机2 占空比
+      
+      if(person_NODat > 1000)//防溢出
+      {
+        person_NODat = person_NODat_MAX + 1;
+      }
+      return;
+    }
+  }
+  if(CSB_A_Dis_Dat < 15)//距离过近
+  {
+    Motor_PWM(1,0); // 电机1 占空比
+    Motor_PWM(2,0); // 电机2 占空比
     return;
   }
-  if(screenCenterX - Coords_1_X < maxUnresponsiveCoordDiff || 
-     Coords_1_X - screenCenterX < maxUnresponsiveCoordDiff)// 目标X坐标在屏幕中心附近
+  if(Coords_1_X > screenCenterX)
   {
-    Motor_PWM(1,Motor_PID(targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
-    Motor_PWM(2,Motor_PID(targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
-  }
-  else 
-  {
-    if(screenCenterX > Coords_1_X)// 目标在右侧
+    if((Coords_1_X - screenCenterX) < maxUnresponsiveCoordDiff)
     {
       Motor_PWM(1,Motor_PID(targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
-      Motor_PWM(2,Motor_PID(targetSpeedValue - turnSpeedDiff,Encoder_2_Dat)); // 电机2 占空比
+      Motor_PWM(2,Motor_PID(targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
+      return;
     }
-    else if(screenCenterX < Coords_1_X)// 目标在左侧
+  }
+  else if(Coords_1_X < screenCenterX)
+  {
+    if((screenCenterX - Coords_1_X) < maxUnresponsiveCoordDiff)
     {
-      Motor_PWM(1,Motor_PID(targetSpeedValue - turnSpeedDiff,Encoder_1_Dat)); // 电机1 占空比
+      Motor_PWM(1,Motor_PID(targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
+      Motor_PWM(2,Motor_PID(targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
+      return;
+    }
+  }
+  else
+  {
+    if(screenCenterX < Coords_1_X)// 目标在左侧 (screenCenterX-Coords_1_X)误差值,人离镜头中心越远值越大
+    {
+      //差值计算公式 = 目标速度-(误差值*系数)
+      Motor_PWM(1,Motor_PID(targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
+      Motor_PWM(2,Motor_PID(targetSpeedValue - (screenCenterX-Coords_1_X)*turnSpeedDiffCoeff,Encoder_2_Dat)); // 电机2 占空比
+    }
+    else if(screenCenterX > Coords_1_X)// 目标在右侧
+    {
+      Motor_PWM(1,Motor_PID(targetSpeedValue - (Coords_1_X - screenCenterX)*turnSpeedDiffCoeff,Encoder_1_Dat)); // 电机1 占空比
       Motor_PWM(2,Motor_PID(targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
     }
   }
 }
 
+//无线遥控跟随
+void Motor_NRF24L01_follow(void)
+{
+  //Joystick__XDat,Joystick__YDat  0 到 4095
+  uint8_t Xmod,Ymod;
+  switch(Joystick__XDat)
+  {
+    case 4095:
+      Xmod = 2;//左
+    break;
+    case 0:
+      Xmod = 1;//右
+    break;
+    default:
+      Xmod = 0;//中
+    break;
+  }
+  switch(Joystick__YDat)
+  {
+    case 4095:
+      Ymod = 1;//下
+    break;
+    case 0:
+      Ymod = 2;//上
+    break;
+    default:
+      Ymod = 0;//中
+    break;
+  }
+  if(Ymod == 0 && Xmod == 0)// 停止
+  {
+    Motor_PWM(1,0); // 电机1 占空比
+    Motor_PWM(2,0); // 电机2 占空比
+    return;
+  }
+  switch(Ymod)//设置了方向
+  {
+    case 2://前进
+      Motor(1,1); // 电机1正转
+      Motor(2,1); // 电机2正转
+    break;
+    case 1://后退
+      Motor(1,2); // 电机1反转
+      Motor(2,2); // 电机2反转
+    break;
+  }
+  switch(Xmod)//设置了速度
+  {
+    case 1://左转
+      if(Ymod == 0)// 停止状态下左转
+      {
+        Motor(1,2); // 电机1反转
+        Motor(2,1); // 电机2正转
+        Motor_PWM(1,Motor_PID(N_targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
+        Motor_PWM(2,Motor_PID(N_targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
+        return;
+      }
+      Motor_PWM(1,Motor_PID(N_targetSpeedValue-N_turnSpeedDiff,Encoder_1_Dat)); // 电机1 占空比
+      Motor_PWM(2,Motor_PID(N_targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
+    break;
+    case 2://右转
+      if(Ymod == 0)// 停止状态下右转
+      {
+        Motor(1,1); // 电机1正转
+        Motor(2,2); // 电机2反转
+        Motor_PWM(1,Motor_PID(N_targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
+        Motor_PWM(2,Motor_PID(N_targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
+        return;
+      }
+      Motor_PWM(1,Motor_PID(N_targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
+      Motor_PWM(2,Motor_PID(N_targetSpeedValue-N_turnSpeedDiff,Encoder_2_Dat)); // 电机2 占空比
+    break;
+    default://直行
+      Motor_PWM(1,Motor_PID(N_targetSpeedValue,Encoder_1_Dat)); // 电机1 占空比
+      Motor_PWM(2,Motor_PID(N_targetSpeedValue,Encoder_2_Dat)); // 电机2 占空比
+    break;
+  }
+}
 //原地转圈
 void Motor_turnInPlace(void)
 {
@@ -273,6 +405,7 @@ void Motor_turnInPlace(void)
 //电机控制
 void Motor_while(void) 
 {
+  /*
   if(follow_flag != 1)// 未进入跟随状态
   {
     return;
@@ -315,6 +448,20 @@ void Motor_while(void)
       Motor_K230_follow(); // 执行跟随
     }
   }
+    */
+  switch(NRF_MODS)
+  {
+    case 0 :
+      Motor_PWM(1,0); // 电机1 占空比
+      Motor_PWM(2,0); // 电机2 占空比
+    break;
+    case 1 ://摄像头跟随
+      Motor_K230_follow(); // 执行摄像头跟随
+    break;
+    case 2 ://无线遥控
+      Motor_NRF24L01_follow(); // 执行无线遥控跟随
+    break;
+  }
 }
 
 // 微秒延时函数
@@ -332,48 +479,10 @@ void Delay_us(uint32_t us)
 // 超声波测距函数 
 void CSB_while(void)
 {
-  //unsigned int i = 0;
   CSB_MOS = 1;
-  CSB_OK = 0;
   HAL_GPIO_WritePin(CSBA_Trig_GPIO_Port, CSBA_Trig_Pin, GPIO_PIN_SET);
   Delay_us(20);
   HAL_GPIO_WritePin(CSBA_Trig_GPIO_Port, CSBA_Trig_Pin, GPIO_PIN_RESET);
-
-  Delay_Time_ms_Start = Time_1ms;
-  Delay_Time_s_Start = Time_1s;
-
-  while (CSB_OK == 0 && Time_1ms+(Time_1s*1000) > (Delay_Time_ms_Start+(Delay_Time_s_Start*1000) + 6)) // 等待测距完成 (6ms超时保护)
-  {
-    //CSB_while_Delay();// 超声波测距延时函数
-  }
-    
-  //此时已得到 CSB_A_Time_Dat
-
-  // CSB_MOS = 2;
-  // CSB_OK = 0;
-  // HAL_GPIO_WritePin(CSBB_Trig_GPIO_Port, CSBB_Trig_Pin, GPIO_PIN_SET);
-  // Delay_us(20);
-  // HAL_GPIO_WritePin(CSBB_Trig_GPIO_Port, CSBB_Trig_Pin, GPIO_PIN_RESET);
-
-  // while (CSB_OK == 0 && i < (72 * 6000)) // 等待测距完成 (6ms超时保护)
-  // {
-  //   i++;
-  // }
-  // i = 0;
-  // //此时已得到 CSB_B_Time_Dat
-
-  // CSB_MOS = 3;
-  // CSB_OK = 0;
-  // HAL_GPIO_WritePin(CSBC_Trig_GPIO_Port, CSBC_Trig_Pin, GPIO_PIN_SET);
-  // Delay_us(20);
-  // HAL_GPIO_WritePin(CSBC_Trig_GPIO_Port, CSBC_Trig_Pin, GPIO_PIN_RESET);
-
-  // while (CSB_OK == 0 && i < (72 * 6000)) // 等待测距完成 (6ms超时保护)
-  // {
-  //   i++;
-  // }
-  // i = 0;
-  // //此时已得到 CSB_C_Time_Dat
 }
 
 // 编码器数据刷新函数
@@ -392,19 +501,15 @@ void Encoder_while(void)
 void OLED_while(void)
 {
 
-  char buffer_1[20],buffer_2[20],buffer_3[20],buffer_4[20],buffer_5[20],buffer_6[20];
+  char buffer_1[48],buffer_2[20],buffer_3[20],buffer_4[20],buffer_5[20],buffer_6[20];
   int OLED_MODS = 5;
   if(OLED_MODS == 1) // OLED 显示坐标
   {
    OLED_NewFrame();
    sprintf(buffer_1, "1X: %d", Coords_1_X);
    sprintf(buffer_2, "1Y: %d", Coords_1_Y);
-   sprintf(buffer_3, "2X: %d", Coords_2_X);
-   sprintf(buffer_4, "2Y: %d", Coords_2_Y);
    OLED_PrintString(1,1,buffer_1,&font16x16, OLED_COLOR_NORMAL);
    OLED_PrintString(60,1,buffer_2,&font16x16, OLED_COLOR_NORMAL);
-   OLED_PrintString(1,30,buffer_3,&font16x16, OLED_COLOR_NORMAL);
-   OLED_PrintString(60,30,buffer_4,&font16x16, OLED_COLOR_NORMAL);
    OLED_ShowFrame();
   }
   else if(OLED_MODS == 2)// OLED 显示串口
@@ -447,10 +552,12 @@ void OLED_while(void)
   else if(OLED_MODS == 5)// OLED 显示
   {/*  */
     OLED_NewFrame();
-    sprintf(buffer_1, "NRF:%s X:%d Y:%d", Receive, Coords_1_X, Coords_1_Y);
+    sprintf(buffer_1, "K230 X:%d Y:%d", Coords_1_X, Coords_1_Y);
     sprintf(buffer_2, "cm:%d E1:%d E2:%d",CSB_A_Dis_Dat,Encoder_1_Dat,Encoder_2_Dat);
+    sprintf(buffer_3, "NRF:%d,X:%d,Y:%d",NRF_MODS,Joystick__XDat,Joystick__YDat);
     OLED_PrintASCIIString(1,1,buffer_1,&afont8x6, OLED_COLOR_NORMAL);
     OLED_PrintASCIIString(1,10,buffer_2,&afont8x6, OLED_COLOR_NORMAL);
+    OLED_PrintASCIIString(1,20,buffer_3,&afont8x6, OLED_COLOR_NORMAL);
     OLED_ShowFrame();
   }
 }
@@ -458,8 +565,15 @@ void OLED_while(void)
 //串口数据解析
 void UART_Parse(void)
 {
+  if(rx_buf[0] == 'n')
+  {
+    person = 0; // 未检测到人
+  }
+  
   if(rx_buf[0] == ']' && uart_rx_len > 0)// 接收到一帧数据
   {
+    person = 1; // 检测到人
+    person_NODat = 0; //清空检测次数
     if(uart_rx_str[0] == '[')// 检查帧头
     {
       // 临时缓冲区用于处理字符串(将uart_rx_str 复制到 temp_buf)
@@ -502,13 +616,38 @@ void UART_Parse(void)
   }
 }
 
+// NRF24L01数据解析
+void ParseNRFData_while(void) 
+{
+    // 查找第一个逗号分隔符
+    char* comma1 = strchr((char*)Receive, ',');
+    if (comma1 != NULL) 
+    {
+        // 提取mod值
+        *comma1 = '\0';  // 截断字符串
+        NRF_MODS = (uint8_t)strtol((char*)Receive, NULL, 10);
+        
+        // 查找第二个逗号分隔符
+        char* comma2 = strchr(comma1 + 1, ',');
+        if (comma2 != NULL) 
+        {
+            // 提取X值
+            *comma2 = '\0';  // 截断字符串
+            Joystick__XDat = (uint16_t)strtol(comma1 + 1, NULL, 10);
+            
+            // 提取Y值
+            Joystick__YDat = (uint16_t)strtol(comma2 + 1, NULL, 10);
+        }
+    }
+}
+
 void NRF24L01_Z_Init(void)
 {
-  while(NRF24L01_Check())
-  {
-      // printf("硬件查寻不到NRF24L01无线模块,请检查接线是否错误\r\n"); 
-      HAL_Delay(1000);
-  }
+  // while(NRF24L01_Check())
+  // {
+  //     // printf("硬件查寻不到NRF24L01无线模块,请检查接线是否错误\r\n"); 
+  //     HAL_Delay(1000);
+  // }
 	NRF24L01_RX_Mode();//设置为接受模式
 }
 
@@ -516,9 +655,8 @@ void NRF24L01_while(void)
 {
   if(NRF24L01_RxPacket(Receive)==0)
     {
-      Receive[32]=0;//加入字符串结束符   
+      Receive[16]=0;//加入字符串结束符   
       NRF24L01_Dat = atoi((char*)Receive); // 将接收到的数据转换为整数
-      //printf("NRF24L01无线模块数据接收成功：%s\r\n",Receive);
     }
 }
 
@@ -585,20 +723,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 // 测试函数
 void test(void)
 {
-  Motor(1,1); // 电机1正转
-  Motor(2,1); // 电机2正转
-  Motor_PWM(1,NRF24L01_Dat*10); // 电机1 占空比
-  Motor_PWM(2,NRF24L01_Dat*10); // 电机2 占空比
+  Motor(1,1); // 电机1 
+  Motor(2,1); // 电机2
+  Motor_PWM(1,500); // 电机1 占空比
+  Motor_PWM(2,500); // 电机2 占空比
 }
 
-
-void CSB_while_Delay(void)// 超声波测距延时函数
-{
-  Encoder_while();// 编码器数据刷新函数
-  Motor_while();// 电机控制
-  OLED_while();//OLED 显示
-  
-}
 /* USER CODE END 0 */
 
 /**
@@ -661,10 +791,11 @@ int main(void)
     /* USER CODE BEGIN 3 */
     CSB_while(); // 超声波测距
     Encoder_while();// 编码器数据刷新函数
-    Motor_while();// 电机控制
-    OLED_while();//OLED 显示
     NRF24L01_while();//NRF24L01 数据接收
-    test();// 测试函数
+    ParseNRFData_while();//NRF24L01 数据解析
+    OLED_while();//OLED 显示
+    //test();// 测试函数
+    Motor_while();// 电机控制
   };
   /* USER CODE END 3 */
 }
